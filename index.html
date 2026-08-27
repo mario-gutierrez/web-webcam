@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101715">
+  <title>Dual Camera Monitor</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #eef4ef;
+      --muted: #9eaaa3;
+      --surface: #151d1a;
+      --surface-raised: #1c2622;
+      --line: #34413b;
+      --accent: #d4f05e;
+      --accent-ink: #172000;
+      --danger: #ff927d;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-width: 320px;
+      min-height: 100vh;
+      margin: 0;
+      color: var(--ink);
+      background-color: #101715;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, .025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, .025) 1px, transparent 1px);
+      background-size: 32px 32px;
+      font-family: "Segoe UI Variable", "Aptos", sans-serif;
+    }
+
+    button, select { font: inherit; }
+
+    .app-shell {
+      width: min(1600px, 100%);
+      min-height: 100vh;
+      margin: 0 auto;
+      padding: clamp(20px, 3vw, 48px);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: clamp(20px, 3vw, 36px);
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 18px;
+    }
+
+    .brand { min-width: 0; }
+
+    h1 {
+      margin: 0;
+      font-family: "Georgia Pro", Georgia, serif;
+      font-size: clamp(1.75rem, 3vw, 2.8rem);
+      font-weight: 500;
+      letter-spacing: 0;
+      line-height: 1;
+    }
+
+    .subtitle {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: .9rem;
+    }
+
+    button {
+      min-height: 42px;
+      flex: 0 0 auto;
+      padding: 0 18px;
+      border: 1px solid var(--accent);
+      border-radius: var(--radius);
+      color: var(--accent-ink);
+      background: var(--accent);
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:hover { filter: brightness(1.08); }
+    button:focus-visible, select:focus-visible {
+      outline: 3px solid rgba(212, 240, 94, .35);
+      outline-offset: 2px;
+    }
+    button:disabled { opacity: .55; cursor: wait; }
+
+    .camera-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-content: center;
+      gap: clamp(16px, 2vw, 28px);
+    }
+
+    .camera-panel {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--surface);
+    }
+
+    .panel-bar {
+      min-height: 68px;
+      padding: 12px 14px;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: center;
+      gap: 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface-raised);
+    }
+
+    .camera-index {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      color: var(--accent);
+      font-family: ui-monospace, "Cascadia Code", monospace;
+      font-size: .8rem;
+      font-weight: 700;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--muted);
+      font-size: .7rem;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    select {
+      width: 100%;
+      min-height: 32px;
+      border: 0;
+      border-radius: 3px;
+      color: var(--ink);
+      background: #25302b;
+      padding: 4px 34px 4px 9px;
+      text-overflow: ellipsis;
+    }
+
+    select:disabled { color: var(--muted); opacity: .75; }
+
+    .viewport {
+      position: relative;
+      aspect-ratio: 16 / 9;
+      overflow: hidden;
+      background: #080c0a;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: contain;
+      background: #080c0a;
+    }
+
+    .empty-state {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-content: center;
+      gap: 12px;
+      padding: 24px;
+      color: var(--muted);
+      text-align: center;
+      pointer-events: none;
+    }
+
+    .empty-state svg {
+      width: 38px;
+      margin: 0 auto;
+      color: var(--line);
+    }
+
+    .empty-state p { margin: 0; }
+    .empty-state.error { color: var(--danger); }
+    .viewport.streaming .empty-state { display: none; }
+
+    .panel-status {
+      min-height: 36px;
+      margin: 0;
+      padding: 9px 14px;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+      font-family: ui-monospace, "Cascadia Code", monospace;
+      font-size: .72rem;
+      line-height: 1.4;
+    }
+
+    footer {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--muted);
+      font-size: .78rem;
+    }
+
+    .secure-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 4px rgba(212, 240, 94, .1);
+    }
+
+    @media (max-width: 760px) {
+      .app-shell { padding: 18px; }
+      header { align-items: flex-start; }
+      .subtitle { display: none; }
+      .camera-grid { grid-template-columns: 1fr; align-content: start; }
+      button { padding-inline: 13px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app-shell">
+    <header>
+      <div class="brand">
+        <h1>Dual Camera Monitor</h1>
+        <p class="subtitle">Two live inputs. One focused view.</p>
+      </div>
+      <button id="enable-cameras" type="button">Enable cameras</button>
+    </header>
+
+    <section class="camera-grid" aria-label="Camera feeds">
+      <article class="camera-panel" data-camera="0">
+        <div class="panel-bar">
+          <span class="camera-index" aria-hidden="true">01</span>
+          <div>
+            <label for="camera-1">Camera one</label>
+            <select id="camera-1" disabled>
+              <option value="">Enable camera access first</option>
+            </select>
+          </div>
+        </div>
+        <div class="viewport">
+          <video autoplay playsinline muted aria-label="Camera one live feed"></video>
+          <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m16 10 5-3v10l-5-3v-4Z"/><rect x="3" y="5" width="13" height="14" rx="2"/></svg>
+            <p>Waiting for camera</p>
+          </div>
+        </div>
+        <p class="panel-status" aria-live="polite">Not connected</p>
+      </article>
+
+      <article class="camera-panel" data-camera="1">
+        <div class="panel-bar">
+          <span class="camera-index" aria-hidden="true">02</span>
+          <div>
+            <label for="camera-2">Camera two</label>
+            <select id="camera-2" disabled>
+              <option value="">Enable camera access first</option>
+            </select>
+          </div>
+        </div>
+        <div class="viewport">
+          <video autoplay playsinline muted aria-label="Camera two live feed"></video>
+          <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m16 10 5-3v10l-5-3v-4Z"/><rect x="3" y="5" width="13" height="14" rx="2"/></svg>
+            <p>Waiting for camera</p>
+          </div>
+        </div>
+        <p class="panel-status" aria-live="polite">Not connected</p>
+      </article>
+    </section>
+
+    <footer>
+      <span class="secure-dot" aria-hidden="true"></span>
+      Camera processing stays in this browser tab
+    </footer>
+  </main>
+
+  <script type="module">
+    const enableButton = document.querySelector('#enable-cameras');
+    const panels = [...document.querySelectorAll('.camera-panel')];
+    const streams = [null, null];
+    let cameras = [];
+
+    const getControls = (index) => {
+      const panel = panels[index];
+      return {
+        panel,
+        select: panel.querySelector('select'),
+        video: panel.querySelector('video'),
+        viewport: panel.querySelector('.viewport'),
+        emptyState: panel.querySelector('.empty-state'),
+        emptyMessage: panel.querySelector('.empty-state p'),
+        status: panel.querySelector('.panel-status')
+      };
+    };
+
+    const stopStream = (index) => {
+      streams[index]?.getTracks().forEach((track) => track.stop());
+      streams[index] = null;
+      const { video, viewport } = getControls(index);
+      video.srcObject = null;
+      viewport.classList.remove('streaming');
+    };
+
+    const showState = (index, message, status = message, isError = false) => {
+      const { emptyState, emptyMessage, status: statusElement } = getControls(index);
+      emptyMessage.textContent = message;
+      statusElement.textContent = status;
+      emptyState.classList.toggle('error', isError);
+    };
+
+    const describeError = (error) => {
+      const messages = {
+        NotAllowedError: 'Camera permission was denied.',
+        NotFoundError: 'This camera is no longer available.',
+        NotReadableError: 'The camera is already in use or unavailable.',
+        OverconstrainedError: 'The selected camera cannot satisfy this request.',
+        SecurityError: 'Camera access requires HTTPS or localhost.'
+      };
+      return messages[error.name] ?? `Camera error: ${error.message}`;
+    };
+
+    async function startCamera(index, deviceId) {
+      stopStream(index);
+      if (!deviceId) {
+        showState(index, 'No camera selected', 'Not connected');
+        return;
+      }
+
+      const controls = getControls(index);
+      controls.select.disabled = true;
+      showState(index, 'Connecting...', 'Opening camera...');
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            deviceId: { exact: deviceId },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 }
+          }
+        });
+        streams[index] = stream;
+        controls.video.srcObject = stream;
+        await controls.video.play();
+        controls.viewport.classList.add('streaming');
+        controls.emptyState.classList.remove('error');
+
+        const settings = stream.getVideoTracks()[0].getSettings();
+        controls.status.textContent = `${settings.width ?? '?'} × ${settings.height ?? '?'} · ${Math.round(settings.frameRate ?? 0)} FPS`;
+      } catch (error) {
+        console.error(error);
+        showState(index, describeError(error), 'Connection failed', true);
+      } finally {
+        controls.select.disabled = false;
+      }
+    }
+
+    function populateSelectors(previousSelections = []) {
+      panels.forEach((_, index) => {
+        const { select } = getControls(index);
+        const preferredId = previousSelections[index];
+        select.replaceChildren(new Option('No camera selected', ''));
+
+        cameras.forEach((camera, cameraIndex) => {
+          select.add(new Option(camera.label || `Camera ${cameraIndex + 1}`, camera.deviceId));
+        });
+
+        if (preferredId && cameras.some(({ deviceId }) => deviceId === preferredId)) {
+          select.value = preferredId;
+        }
+        select.disabled = false;
+      });
+    }
+
+    async function refreshDevices() {
+      const previousSelections = panels.map((_, index) => getControls(index).select.value);
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      cameras = devices.filter(({ kind }) => kind === 'videoinput');
+      populateSelectors(previousSelections);
+      enableButton.textContent = cameras.length ? `${cameras.length} camera${cameras.length === 1 ? '' : 's'} found` : 'No cameras found';
+    }
+
+    async function enableCameras() {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        panels.forEach((_, index) => showState(index, 'Camera APIs are not supported in this browser.', 'Unsupported browser', true));
+        enableButton.disabled = true;
+        return;
+      }
+
+      enableButton.disabled = true;
+      enableButton.textContent = 'Requesting access...';
+
+      try {
+        const permissionStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        permissionStream.getTracks().forEach((track) => track.stop());
+        await refreshDevices();
+
+        const defaults = cameras.slice(0, 2);
+        await Promise.all(defaults.map((camera, index) => {
+          getControls(index).select.value = camera.deviceId;
+          return startCamera(index, camera.deviceId);
+        }));
+      } catch (error) {
+        console.error(error);
+        const message = describeError(error);
+        panels.forEach((_, index) => showState(index, message, 'Access unavailable', true));
+        enableButton.textContent = 'Try again';
+      } finally {
+        enableButton.disabled = false;
+      }
+    }
+
+    panels.forEach((_, index) => {
+      getControls(index).select.addEventListener('change', (event) => {
+        startCamera(index, event.target.value);
+      });
+    });
+
+    enableButton.addEventListener('click', enableCameras);
+
+    navigator.mediaDevices?.addEventListener('devicechange', async () => {
+      try {
+        await refreshDevices();
+      } catch (error) {
+        console.error('Could not refresh camera devices.', error);
+      }
+    });
+
+    window.addEventListener('pagehide', () => {
+      streams.forEach((_, index) => stopStream(index));
+    });
+  </script>
+</body>
+</html>
