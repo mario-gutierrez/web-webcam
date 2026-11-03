@@ -157,7 +157,7 @@
 
     .viewport {
       position: relative;
-      aspect-ratio: 16 / 9;
+      aspect-ratio: var(--video-aspect-ratio, 16 / 9);
       overflow: hidden;
       background: #080c0a;
     }
@@ -308,7 +308,7 @@
     const panels = [...document.querySelectorAll('.camera-panel')];
     const streams = [null, null];
     const requests = [0, 0];
-    const resolutionPresets = [[1920, 1080], [1280, 720], [1280, 1024], [640, 512], [640, 480], [320, 240]];
+    const resolutionPresets = [[1920, 1080], [1280, 720], [1024, 1280], [512, 640], [640, 480], [320, 240]];
     const storageKey = 'dual-camera-selections';
     let savedSelections = [{}, {}];
     let cameras = [];
@@ -439,6 +439,7 @@
         savedSelections[index].resolution = chosen;
         saveSelections();
         const settings = track.getSettings();
+        controls.viewport.style.setProperty('--video-aspect-ratio', `${settings.width} / ${settings.height}`);
         controls.status.textContent = `${settings.width ?? '?'} × ${settings.height ?? '?'} · ${Math.round(settings.frameRate ?? 0)} FPS`;
       } catch (error) {
         if (request !== requests[index]) return;
@@ -552,6 +553,7 @@
           if (settings.width !== width || settings.height !== height) throw new Error('Resolution was not applied.');
           savedSelections[index].resolution = controls.resolution.value;
           saveSelections();
+          controls.viewport.style.setProperty('--video-aspect-ratio', `${settings.width} / ${settings.height}`);
           controls.status.textContent = `${settings.width} × ${settings.height} · ${Math.round(settings.frameRate ?? 0)} FPS`;
         } catch (error) {
           if (streams[index]?.getVideoTracks()[0] !== track) return;
