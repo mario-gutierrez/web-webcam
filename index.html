@@ -110,12 +110,14 @@
       min-height: 68px;
       padding: 12px 14px;
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) auto;
       align-items: center;
       gap: 14px;
       border-bottom: 1px solid var(--line);
       background: var(--surface-raised);
     }
+
+    .panel-bar button { align-self: end; min-height: 32px; }
 
     .camera-index {
       width: 34px;
@@ -222,6 +224,9 @@
       header { align-items: flex-start; }
       .subtitle { display: none; }
       .camera-grid { grid-template-columns: 1fr; align-content: start; }
+      .panel-bar { grid-template-columns: auto minmax(0, 1fr) auto; }
+      .resolution-field { grid-column: 2; }
+      .panel-bar button { grid-column: 3; }
       button { padding-inline: 13px; }
     }
   </style>
@@ -242,10 +247,17 @@
           <span class="camera-index" aria-hidden="true">01</span>
           <div>
             <label for="camera-1">Camera one</label>
-            <select id="camera-1" disabled>
+            <select id="camera-1" class="device-select" disabled>
               <option value="">Enable camera access first</option>
             </select>
           </div>
+          <div class="resolution-field">
+            <label for="resolution-1">Resolution</label>
+            <select id="resolution-1" class="resolution-select" disabled>
+              <option value="">Start camera to detect</option>
+            </select>
+          </div>
+          <button class="stream-button" type="button" disabled>Start</button>
         </div>
         <div class="viewport">
           <video autoplay playsinline muted aria-label="Camera one live feed"></video>
@@ -262,10 +274,17 @@
           <span class="camera-index" aria-hidden="true">02</span>
           <div>
             <label for="camera-2">Camera two</label>
-            <select id="camera-2" disabled>
+            <select id="camera-2" class="device-select" disabled>
               <option value="">Enable camera access first</option>
             </select>
           </div>
+          <div class="resolution-field">
+            <label for="resolution-2">Resolution</label>
+            <select id="resolution-2" class="resolution-select" disabled>
+              <option value="">Start camera to detect</option>
+            </select>
+          </div>
+          <button class="stream-button" type="button" disabled>Start</button>
         </div>
         <div class="viewport">
           <video autoplay playsinline muted aria-label="Camera two live feed"></video>
@@ -288,13 +307,35 @@
     const enableButton = document.querySelector('#enable-cameras');
     const panels = [...document.querySelectorAll('.camera-panel')];
     const streams = [null, null];
+    const requests = [0, 0];
+    const resolutionPresets = [[1920, 1080], [1280, 720], [1280, 1024], [640, 512], [640, 480], [320, 240]];
+    const storageKey = 'dual-camera-selections';
+    let savedSelections = [{}, {}];
     let cameras = [];
+    let accessGranted = false;
+
+    try {
+      const stored = JSON.parse(localStorage.getItem(storageKey));
+      if (Array.isArray(stored)) savedSelections = panels.map((_, index) => stored[index] ?? {});
+    } catch (error) {
+      console.warn('Camera preferences are unavailable.', error);
+    }
+
+    const saveSelections = () => {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(savedSelections));
+      } catch (error) {
+        console.warn('Could not save camera preferences.', error);
+      }
+    };
 
     const getControls = (index) => {
       const panel = panels[index];
       return {
         panel,
-        select: panel.querySelector('select'),
+        select: panel.querySelector('.device-select'),
+        resolution: panel.querySelector('.resolution-select'),
+        button: panel.querySelector('.stream-button'),
         video: panel.querySelector('video'),
         viewport: panel.querySelector('.viewport'),
         emptyState: panel.querySelector('.empty-state'),
@@ -304,11 +345,15 @@
     };
 
     const stopStream = (index) => {
+      requests[index]++;
       streams[index]?.getTracks().forEach((track) => track.stop());
       streams[index] = null;
-      const { video, viewport } = getControls(index);
+      const { video, viewport, button, select, resolution } = getControls(index);
       video.srcObject = null;
       viewport.classList.remove('streaming');
+      button.textContent = 'Start';
+      button.disabled = !select.value;
+      resolution.disabled = true;
     };
 
     const showState = (index, message, status = message, isError = false) => {
@@ -337,7 +382,9 @@
       }
 
       const controls = getControls(index);
-      controls.select.disabled = true;
+      const request = requests[index];
+      controls.button.disabled = false;
+      controls.button.textContent = 'Stop';
       showState(index, 'Connecting...', 'Opening camera...');
 
       try {
@@ -345,31 +392,66 @@
           audio: false,
           video: {
             deviceId: { exact: deviceId },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
+            width: { ideal: 640 },
+            height: { ideal: 512 },
             frameRate: { ideal: 30 }
           }
         });
+        if (request !== requests[index]) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
         streams[index] = stream;
         controls.video.srcObject = stream;
         await controls.video.play();
+        if (request !== requests[index]) return;
         controls.viewport.classList.add('streaming');
         controls.emptyState.classList.remove('error');
 
-        const settings = stream.getVideoTracks()[0].getSettings();
+        const track = stream.getVideoTracks()[0];
+        const original = track.getSettings();
+        const capabilities = track.getCapabilities?.();
+        const available = [];
+        for (const [width, height] of resolutionPresets) {
+          if (request !== requests[index]) return;
+          if (capabilities?.width && (width < capabilities.width.min || width > capabilities.width.max)) continue;
+          if (capabilities?.height && (height < capabilities.height.min || height > capabilities.height.max)) continue;
+          try {
+            await track.applyConstraints({ width: { exact: width }, height: { exact: height } });
+            const settings = track.getSettings();
+            if (settings.width === width && settings.height === height) available.push(`${width}x${height}`);
+          } catch (error) {
+            if (request !== requests[index]) return;
+          }
+        }
+        if (request !== requests[index]) return;
+        const originalResolution = `${original.width}x${original.height}`;
+        if (!available.includes(originalResolution)) available.push(originalResolution);
+        controls.resolution.replaceChildren(...available.map((value) => new Option(value.replace('x', ' × '), value)));
+        const preferred = savedSelections[index].resolution;
+        const chosen = available.includes(preferred) ? preferred : originalResolution;
+        const [width, height] = chosen.split('x').map(Number);
+        await track.applyConstraints({ width: { exact: width }, height: { exact: height } });
+        if (request !== requests[index]) return;
+        controls.resolution.value = chosen;
+        controls.resolution.disabled = false;
+        savedSelections[index].deviceId = deviceId;
+        savedSelections[index].resolution = chosen;
+        saveSelections();
+        const settings = track.getSettings();
         controls.status.textContent = `${settings.width ?? '?'} × ${settings.height ?? '?'} · ${Math.round(settings.frameRate ?? 0)} FPS`;
       } catch (error) {
+        if (request !== requests[index]) return;
         console.error(error);
+        stopStream(index);
         showState(index, describeError(error), 'Connection failed', true);
-      } finally {
-        controls.select.disabled = false;
       }
     }
 
     function populateSelectors(previousSelections = []) {
       panels.forEach((_, index) => {
         const { select } = getControls(index);
-        const preferredId = previousSelections[index];
+        const preferredId = previousSelections[index] || savedSelections[index].deviceId;
         select.replaceChildren(new Option('No camera selected', ''));
 
         cameras.forEach((camera, cameraIndex) => {
@@ -380,6 +462,7 @@
           select.value = preferredId;
         }
         select.disabled = false;
+        getControls(index).button.disabled = !select.value;
       });
     }
 
@@ -388,13 +471,28 @@
       const devices = await navigator.mediaDevices.enumerateDevices();
       cameras = devices.filter(({ kind }) => kind === 'videoinput');
       populateSelectors(previousSelections);
-      enableButton.textContent = cameras.length ? `${cameras.length} camera${cameras.length === 1 ? '' : 's'} found` : 'No cameras found';
+      panels.forEach((_, index) => {
+        if (streams[index] && !cameras.some(({ deviceId }) => deviceId === previousSelections[index])) {
+          stopStream(index);
+          showState(index, 'Camera disconnected', 'Not connected');
+        }
+      });
+      enableButton.textContent = 'Refresh cameras';
     }
 
     async function enableCameras() {
       if (!navigator.mediaDevices?.getUserMedia) {
         panels.forEach((_, index) => showState(index, 'Camera APIs are not supported in this browser.', 'Unsupported browser', true));
         enableButton.disabled = true;
+        return;
+      }
+
+      if (accessGranted) {
+        try {
+          await refreshDevices();
+        } catch (error) {
+          console.error('Could not refresh camera devices.', error);
+        }
         return;
       }
 
@@ -405,11 +503,12 @@
         const permissionStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         permissionStream.getTracks().forEach((track) => track.stop());
         await refreshDevices();
+        accessGranted = true;
 
-        const defaults = cameras.slice(0, 2);
-        await Promise.all(defaults.map((camera, index) => {
-          getControls(index).select.value = camera.deviceId;
-          return startCamera(index, camera.deviceId);
+        await Promise.all(panels.map((_, index) => {
+          const select = getControls(index).select;
+          if (!select.value && !savedSelections[index].deviceId && cameras[index]) select.value = cameras[index].deviceId;
+          return select.value ? startCamera(index, select.value) : Promise.resolve();
         }));
       } catch (error) {
         console.error(error);
@@ -422,8 +521,45 @@
     }
 
     panels.forEach((_, index) => {
-      getControls(index).select.addEventListener('change', (event) => {
-        startCamera(index, event.target.value);
+      const controls = getControls(index);
+      controls.select.addEventListener('change', (event) => {
+        const wasStreaming = Boolean(streams[index]);
+        stopStream(index);
+        controls.resolution.replaceChildren(new Option('Start camera to detect', ''));
+        savedSelections[index] = { deviceId: event.target.value };
+        saveSelections();
+        if (wasStreaming && event.target.value) startCamera(index, event.target.value);
+        else showState(index, event.target.value ? 'Camera stopped' : 'No camera selected', 'Not connected');
+      });
+      controls.button.addEventListener('click', () => {
+        if (streams[index] || controls.button.textContent === 'Stop') {
+          stopStream(index);
+          showState(index, 'Camera stopped', 'Not connected');
+        } else {
+          startCamera(index, controls.select.value);
+        }
+      });
+      controls.resolution.addEventListener('change', async () => {
+        const track = streams[index]?.getVideoTracks()[0];
+        if (!track) return;
+        const previous = savedSelections[index].resolution || `${track.getSettings().width}x${track.getSettings().height}`;
+        const [width, height] = controls.resolution.value.split('x').map(Number);
+        controls.resolution.disabled = true;
+        try {
+          await track.applyConstraints({ width: { exact: width }, height: { exact: height } });
+          if (streams[index]?.getVideoTracks()[0] !== track) return;
+          const settings = track.getSettings();
+          if (settings.width !== width || settings.height !== height) throw new Error('Resolution was not applied.');
+          savedSelections[index].resolution = controls.resolution.value;
+          saveSelections();
+          controls.status.textContent = `${settings.width} × ${settings.height} · ${Math.round(settings.frameRate ?? 0)} FPS`;
+        } catch (error) {
+          if (streams[index]?.getVideoTracks()[0] !== track) return;
+          controls.resolution.value = previous;
+          showState(index, describeError(error), 'Could not apply resolution', true);
+        } finally {
+          if (streams[index]?.getVideoTracks()[0] === track) controls.resolution.disabled = false;
+        }
       });
     });
 

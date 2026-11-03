@@ -3,6 +3,8 @@
 A dependency-free, single-file web app that displays two webcam feeds at the
 same time. Each feed has its own device selector and `MediaStream`, so either
 camera can be changed or stopped without interrupting the other.
+Each feed also has a Start/Stop button and a resolution selector. Device and
+resolution preferences are saved in this browser's local storage.
 
 The complete application lives in [`index.html`](index.html).
 
@@ -17,7 +19,9 @@ python -m http.server 8000
 
 Then open <http://localhost:8000> in a current version of Chrome, Edge,
 Firefox, or Safari. Click **Enable cameras** and accept the browser permission
-prompt. A production deployment must use HTTPS.
+prompt. Use each feed's Start/Stop button to control it independently. A
+production deployment must use HTTPS. After access is granted, the header
+button refreshes the device list without restarting stopped feeds.
 
 No build step, package manager, or third-party library is required.
 
@@ -29,8 +33,8 @@ No build step, package manager, or third-party library is required.
    The camera grid uses two columns on larger screens and one column below
    `760px`. Each video viewport keeps a stable `16 / 9` aspect ratio.
 2. **Markup** - The `.camera-grid` contains two `.camera-panel` elements. Each
-   panel has a labeled `<select>`, a muted inline `<video>`, an empty/error
-   state, and an `aria-live` status line.
+  panel has labeled device and resolution selectors, a Start/Stop button, a
+  muted inline `<video>`, an empty/error state, and an `aria-live` status line.
 3. **Controller** - The module script discovers devices, starts and stops
    streams, updates panel state, and responds to browser and device events.
 
@@ -40,10 +44,13 @@ Panel order is therefore significant: panel index `0` corresponds to
 
 ## Runtime state
 
-The controller keeps only two pieces of shared state:
+The controller tracks active streams, pending requests, discovered cameras,
+and saved preferences:
 
 ```js
 const streams = [null, null];
+const requests = [0, 0];
+let savedSelections = [{}, {}];
 let cameras = [];
 ```
 
@@ -51,6 +58,10 @@ let cameras = [];
   explicit and prevents abandoned camera tracks from keeping hardware active.
 - `cameras` stores the latest `videoinput` devices returned by
   `navigator.mediaDevices.enumerateDevices()`.
+- `requests` prevents a pending camera request from restarting a stopped feed.
+- `savedSelections` keeps each panel's device ID and chosen resolution in
+  `localStorage`. Camera IDs may change across browser sessions; missing
+  devices remain unselected until they reconnect or another is chosen.
 
 `getControls(index)` is the DOM boundary. It returns the selector, video,
 viewport, empty state, and status elements belonging to one panel. The rest of
@@ -66,9 +77,10 @@ granted. The app follows this sequence:
 2. `enableCameras()` requests a temporary video stream with `getUserMedia()`.
 3. The temporary stream is stopped immediately after permission is granted.
 4. `refreshDevices()` enumerates devices and retains only `videoinput` entries.
-5. `populateSelectors()` fills both selectors while preserving valid previous
-   selections.
-6. The first two discovered cameras are selected and started in parallel.
+5. `populateSelectors()` fills both device selectors, restoring saved devices
+  when available.
+6. The first two discovered cameras are used when no preferences exist. Selected
+  cameras are started in parallel.
 
 When a selection changes, `startCamera(index, deviceId)`:
 
@@ -76,7 +88,16 @@ When a selection changes, `startCamera(index, deviceId)`:
 2. Requests the exact selected device using its `deviceId`.
 3. Applies ideal, non-mandatory preferences of 1920x1080 at 30 FPS.
 4. Assigns the stream to `video.srcObject` and starts playback.
-5. Reads the negotiated settings from the video track for the status line.
+5. Tests common resolution presets with exact constraints, listing only those
+  that the active track actually accepts, plus its initial resolution.
+6. Restores the saved resolution when supported, and reports the resulting
+  settings in the status line.
+
+Changing a resolution applies it immediately to that feed. Stopping a feed
+releases its stream but keeps the saved device and resolution for the next
+start. Resolution discovery may briefly change the picture during startup.
+The browser does not expose a complete list of every camera mode, so the menu
+contains verified common presets rather than every possible resolution.
 
 Using `ideal` for resolution and frame rate allows the browser to fall back to
 values the camera supports. Using `{ exact: deviceId }` ensures the selected
@@ -85,12 +106,12 @@ physical device is used or produces a clear error.
 ## Cleanup and device changes
 
 `stopStream(index)` calls `stop()` on every track before clearing the stored
-stream and video source. It runs before replacing a stream and for every panel
-on the `pagehide` event.
+stream and video source. It runs when Stop is clicked, before replacing a
+stream, and for every panel on the `pagehide` event.
 
 The app also listens for the `MediaDevices` `devicechange` event. Connecting or
 disconnecting a webcam refreshes both selectors and keeps selections that still
-exist. If an active camera is physically removed, the browser ends that track;
+exist. If an active camera is physically removed, its stream is stopped and
 the selector list is refreshed so another device can be chosen.
 
 ## Reusing the code
@@ -101,7 +122,9 @@ Preserve these DOM relationships for each camera panel:
 
 ```html
 <article class="camera-panel">
-  <select aria-label="Camera"></select>
+  <select class="device-select" aria-label="Camera"></select>
+  <select class="resolution-select" aria-label="Resolution"></select>
+  <button class="stream-button" type="button">Start</button>
   <div class="viewport">
     <video autoplay playsinline muted></video>
     <div class="empty-state"><p>Waiting for camera</p></div>
@@ -167,8 +190,11 @@ videos play through speakers.
 - `navigator.mediaDevices.addEventListener('devicechange', ...)` observes
   hardware changes.
 - `MediaStreamTrack.getSettings()` reports the negotiated resolution and FPS.
+- `MediaStreamTrack.getCapabilities()` narrows resolution presets where available.
+- `MediaStreamTrack.applyConstraints()` verifies and applies resolutions.
 - `MediaStreamTrack.stop()` releases camera hardware.
 - `HTMLVideoElement.srcObject` attaches a stream without creating object URLs.
+- `localStorage` remembers panel preferences between visits in the same browser.
 
 ## Integration considerations
 
